@@ -153,7 +153,13 @@ Report connection state and readonly mode. No parameters.
 
 ## Safety
 
-Letting a language model publish `/cmd_vel` to a physical robot is a real risk. Set `ROSBRIDGE_MCP_READONLY=true` to run in **read-only mode**: `publish_message` is rejected, and `call_service` only permits read-only `/rosapi/*` introspection services (`set_param` / `delete_param` are still blocked). We strongly recommend starting in read-only mode with real hardware — see the full [real-robot safety checklist](docs/real-robot-safety.md).
+Letting a language model publish `/cmd_vel` to a physical robot is a real risk. Set `ROSBRIDGE_MCP_READONLY=true` to run in **read-only mode**: `publish_message` is rejected, and `call_service` only permits read-only `/rosapi/*` introspection services (`set_param` / `delete_param` are still blocked). We strongly recommend starting in read-only mode with real hardware — see the full [real-robot safety checklist](docs/real-robot-safety.md) and the deployment security model in [SECURITY.md](SECURITY.md).
+
+## Privacy & legal
+
+**No telemetry, no data collection.** Audited (2026-08): the only network connection this package ever opens is the WebSocket to the `ROSBRIDGE_URL` you configure — there are no analytics, no phone-home, no crash reporting, no hidden HTTP calls, and the code contains no logging of message contents to disk. The bundled mock server binds to `127.0.0.1` only. Robot data returned by tools goes exclusively to your MCP client (which forwards it to the LLM you chose — that part is under your control, not ours).
+
+**License compliance.** All runtime and transitive dependencies carry permissive licenses compatible with this project's MIT license — direct: `fastmcp` (Apache-2.0), `websockets` (BSD-3-Clause); key transitive: `mcp` (MIT), `pydantic` (MIT), `starlette` (BSD-3-Clause), `httpx` (BSD-3-Clause), `anyio` (MIT), `cryptography` (Apache-2.0/BSD-3). No GPL/AGPL/proprietary code anywhere in the dependency tree, and all code in this repository is original work written for this project.
 
 ## FAQ
 
@@ -174,11 +180,7 @@ The server only connects to the `ROSBRIDGE_URL` you configure. Topic data is ret
 
 ## Roadmap
 
-- [ ] Topic/service allow- and deny-lists
-- [ ] Action client support (`send_goal` / `cancel_goal`)
-- [ ] rosbridge authentication (`auth` op) and TLS (`wss://`)
-- [ ] MCP resources for continuous topic streams
-- [ ] Message schema hints via `/rosapi/message_details`
+Staged plan with per-stage goals, deliverables, and the resources each stage needs: see [ROADMAP.md](ROADMAP.md). Highlights: v0.2 action client + TF + camera snapshots, v0.3 HTTP transport + Docker image + rosbridge auth/TLS, v0.4 multi-robot fleets + MCP resources (URDF/map), v1.0 stable API + official MCP registry listing + Gazebo/Isaac Sim examples.
 
 ## Contributing
 
