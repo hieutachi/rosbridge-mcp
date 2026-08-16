@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rosbridge": {
+      "command": "rosbridge-mcp",
+      "env": {
+        "ROSBRIDGE_URL": "ws://192.168.1.42:9090",
+        "ROSBRIDGE_MCP_READONLY": "true"
+      }
+    }
+  }
+}
