@@ -7,9 +7,11 @@ Three ways to get a live rosbridge endpoint at `ws://localhost:9090` without own
 The package ships a fake rosbridge with canned topics (`/chatter`, `/cmd_vel`, `/scan`) and rosapi services:
 
 ```bash
-pip install rosbridge-mcp
+pip install git+https://github.com/hieutachi/rosbridge-mcp.git
 python -m rosbridge_mcp.mock_server 9090
 ```
+
+(`pip install rosbridge-mcp` from PyPI — coming soon.)
 
 Leave it running, configure your MCP client with `ROSBRIDGE_URL=ws://localhost:9090` ([Claude Desktop guide](claude-desktop.md), [Cursor/VS Code guide](cursor-vscode.md)), and you can exercise every tool. Good for testing the wiring; the data is fake.
 

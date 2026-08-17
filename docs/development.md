@@ -5,7 +5,7 @@ How the code is organized, how to add a tool, and how to test everything without
 ## Setup
 
 ```bash
-git clone https://github.com/N4G/rosbridge-mcp.git
+git clone https://github.com/hieutachi/rosbridge-mcp.git
 cd rosbridge-mcp
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"

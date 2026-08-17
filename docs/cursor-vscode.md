@@ -11,8 +11,10 @@ Get robot tools inside your editor's AI agent. Self-contained guide.
 ## Step 1 — Install rosbridge-mcp
 
 ```bash
-pip install rosbridge-mcp
+pip install git+https://github.com/hieutachi/rosbridge-mcp.git
 ```
+
+(`pip install rosbridge-mcp` from PyPI — coming soon.)
 
 ## Step 2a — Cursor
 
@@ -71,7 +73,7 @@ Set `ROSBRIDGE_MCP_READONLY` to `"false"` when you want the agent to publish or 
 | Symptom | Fix |
 | --- | --- |
 | Server shows red / "failed" in Cursor MCP settings | Run `rosbridge-mcp` in a terminal yourself — if the shell can't find it, use the absolute path to the executable in `"command"`. |
-| Tools listed but calls fail with `Cannot connect to rosbridge` | rosbridge is not running or `ROSBRIDGE_URL` is wrong. From the same machine, verify port 9090 answers: `curl -sS -o NUL -w "%{http_code}" http://localhost:9090` returns a code (any code) if something listens; connection refused means nothing is listening. Check firewalls for remote hosts. |
+| Tools listed but calls fail with `Cannot connect to rosbridge` | rosbridge is not running or `ROSBRIDGE_URL` is wrong. From the same machine, verify port 9090 answers: Windows: `curl -sS -o NUL -w "%{http_code}" http://localhost:9090`; macOS/Linux: `curl -sS -o /dev/null -w "%{http_code}" http://localhost:9090`. Any HTTP code means something listens; connection refused means nothing is listening. Check firewalls for remote hosts. |
 | VS Code ignores the config | You used `mcpServers` instead of `servers`, or your VS Code is older than 1.99. |
 | Changes to `mcp.json` have no effect | Restart the MCP server from the MCP settings UI (Cursor) or reload the window (VS Code). |
-| Version mismatch errors on install | `pip install --upgrade rosbridge-mcp` pulls compatible `fastmcp>=2,<3` and `websockets>=12,<16`. Use a virtual environment if your system Python has conflicting pins. |
+| Version mismatch errors on install | `pip install --upgrade git+https://github.com/hieutachi/rosbridge-mcp.git` pulls compatible `fastmcp>=2,<3` and `websockets>=12,<16`. Use a virtual environment if your system Python has conflicting pins. |

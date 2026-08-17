@@ -1,10 +1,10 @@
 # rosbridge-mcp
 
-[![CI](https://github.com/N4G/rosbridge-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/N4G/rosbridge-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/hieutachi/rosbridge-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/hieutachi/rosbridge-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
-**rosbridge-mcp** is a [Model Context Protocol](https://modelcontextprotocol.io) server that connects AI agents (Claude Desktop, Cursor, VS Code, and any other MCP client) to robots running **ROS 2**, via the standard [rosbridge v2 protocol](https://github.com/RosbridgeFoundation/rosbridge_suite) (WebSocket + JSON). You run `rosbridge_server` on your robot or ROS machine; this MCP server connects to it over the network and exposes tools that let the AI observe topics, inspect the ROS graph, publish messages, and call services — no ROS installation needed on the machine running the AI client.
+**rosbridge-mcp** is a [Model Context Protocol](https://modelcontextprotocol.io) server that connects AI agents (Claude Desktop, Cursor, VS Code, and any other MCP client) to robots running **ROS 2**, via the standard [rosbridge v2 protocol](https://github.com/RobotWebTools/rosbridge_suite) (WebSocket + JSON). You run `rosbridge_server` on your robot or ROS machine; this MCP server connects to it over the network and exposes tools that let the AI observe topics, inspect the ROS graph, publish messages, and call services — no ROS installation needed on the machine running the AI client.
 
 ## Architecture
 
@@ -19,8 +19,10 @@
 ## Quick Start (60 seconds)
 
 ```bash
-pip install rosbridge-mcp
+pip install git+https://github.com/hieutachi/rosbridge-mcp.git
 ```
+
+Or, once published: `pip install rosbridge-mcp` (PyPI — coming soon).
 
 Add to your MCP client config (see per-client guides below for exact file locations):
 
@@ -182,6 +184,10 @@ The server only connects to the `ROSBRIDGE_URL` you configure. Topic data is ret
 
 Staged plan with per-stage goals, deliverables, and the resources each stage needs: see [ROADMAP.md](ROADMAP.md). Highlights: v0.2 action client + TF + camera snapshots, v0.3 HTTP transport + Docker image + rosbridge auth/TLS, v0.4 multi-robot fleets + MCP resources (URDF/map), v1.0 stable API + official MCP registry listing + Gazebo/Isaac Sim examples.
 
+## Related resources
+
+If you are getting into robotics, the [Robotics RL & UAV ebook](https://ebook-robotics-rl-uav.vercel.app) is a companion learning resource by the author covering reinforcement learning and UAV robotics.
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) and the [development guide](docs/development.md). Please sign off your commits (DCO).
@@ -205,3 +211,5 @@ Tài liệu được chia theo từng kịch bản — chọn đúng hướng d�
 - [Developer](docs/development.md) — kiến trúc code, cách thêm tool mới, chạy test với mock (không cần ROS)
 
 7 tool: `list_topics`, `list_nodes`, `list_services`, `get_topic_snapshot`, `publish_message`, `call_service`, `get_connection_status`. Bật `ROSBRIDGE_MCP_READONLY=true` để chặn mọi thao tác ghi khi làm việc với robot thật.
+
+Tài liệu học kèm theo của tác giả: [Robotics RL & UAV ebook](https://ebook-robotics-rl-uav.vercel.app) — ebook về học tăng cường (reinforcement learning) và robot UAV.

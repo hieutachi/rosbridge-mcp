@@ -48,9 +48,9 @@ dev = [
 rosbridge-mcp = "rosbridge_mcp.server:main"
 
 [project.urls]
-Homepage = "https://github.com/N4G/rosbridge-mcp"
-Repository = "https://github.com/N4G/rosbridge-mcp"
-Issues = "https://github.com/N4G/rosbridge-mcp/issues"
+Homepage = "https://github.com/hieutachi/rosbridge-mcp"
+Repository = "https://github.com/hieutachi/rosbridge-mcp"
+Issues = "https://github.com/hieutachi/rosbridge-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["rosbridge_mcp"]

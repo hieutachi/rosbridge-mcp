@@ -63,26 +63,34 @@ class MockRosbridge:
             self._server = None
 
     async def _handler(self, websocket: Any) -> None:
-        async for raw in websocket:
-            msg = json.loads(raw)
-            op = msg.get("op")
-            if op == "subscribe":
-                topic = msg["topic"]
-                self.subscribed.append(topic)
-                for payload in self.topic_messages.get(topic, []):
-                    await websocket.send(
-                        json.dumps({"op": "publish", "topic": topic, "msg": payload})
+        try:
+            async for raw in websocket:
+                msg = json.loads(raw)
+                op = msg.get("op")
+                if op == "subscribe":
+                    topic = msg["topic"]
+                    self.subscribed.append(topic)
+                    for payload in self.topic_messages.get(topic, []):
+                        await websocket.send(
+                            json.dumps(
+                                {"op": "publish", "topic": topic, "msg": payload}
+                            )
+                        )
+                elif op == "unsubscribe":
+                    self.unsubscribed.append(msg["topic"])
+                elif op == "advertise":
+                    self.advertised.append(
+                        {"topic": msg["topic"], "type": msg.get("type", "")}
                     )
-            elif op == "unsubscribe":
-                self.unsubscribed.append(msg["topic"])
-            elif op == "advertise":
-                self.advertised.append(
-                    {"topic": msg["topic"], "type": msg.get("type", "")}
-                )
-            elif op == "publish":
-                self.published.append({"topic": msg["topic"], "msg": msg.get("msg")})
-            elif op == "call_service":
-                await websocket.send(json.dumps(self._service_response(msg)))
+                elif op == "publish":
+                    self.published.append(
+                        {"topic": msg["topic"], "msg": msg.get("msg")}
+                    )
+                elif op == "call_service":
+                    await websocket.send(json.dumps(self._service_response(msg)))
+        except websockets.exceptions.ConnectionClosed:
+            # Client dropped mid-conversation; nothing to clean up.
+            pass
 
     def _service_response(self, msg: dict[str, Any]) -> dict[str, Any]:
         service = msg.get("service", "")
@@ -116,7 +124,7 @@ async def _main() -> None:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9090
     mock = MockRosbridge()
     await mock.start(port)
-    print(f"Mock rosbridge listening on {mock.url}")
+    print(f"Mock rosbridge listening on {mock.url}", flush=True)
     await asyncio.Future()
 
 

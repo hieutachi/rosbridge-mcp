@@ -11,8 +11,10 @@ This guide takes you from zero to asking Claude about your robot. It is self-con
 ## Step 1 — Install rosbridge-mcp
 
 ```bash
-pip install rosbridge-mcp
+pip install git+https://github.com/hieutachi/rosbridge-mcp.git
 ```
+
+(`pip install rosbridge-mcp` from PyPI — coming soon.)
 
 Verify the command is on your PATH (prints the executable's location):
 
@@ -76,6 +78,6 @@ Claude should call `list_topics` and `list_nodes`. Then:
 | --- | --- |
 | Server does not appear in Claude | Config file is invalid JSON (validate it), or Claude was not fully restarted. Check logs: `%APPDATA%\Claude\logs\mcp*.log` (Windows) or `~/Library/Logs/Claude/mcp*.log` (macOS). |
 | `spawn rosbridge-mcp ENOENT` in logs | The command is not on the PATH Claude uses. Use the absolute path to the executable in `"command"`. |
-| Tools appear but every call returns `Cannot connect to rosbridge at ...` | rosbridge is not running, or `ROSBRIDGE_URL` is wrong. Test reachability: `python -c "import websockets, asyncio; asyncio.run(websockets.connect('ws://<robot-ip>:9090'))"` — no output means success. Check firewalls on both machines allow TCP 9090. |
+| Tools appear but every call returns `Cannot connect to rosbridge at ...` | rosbridge is not running, or `ROSBRIDGE_URL` is wrong. Test reachability: `Test-NetConnection <robot-ip> -Port 9090` (Windows PowerShell) or `nc -zv <robot-ip> 9090` (macOS/Linux) — `TcpTestSucceeded : True` / `succeeded` means something listens on the port. Check firewalls on both machines allow TCP 9090. |
 | `publish_message` returns `Rejected: ... ROSBRIDGE_MCP_READONLY` | Working as intended. Set `ROSBRIDGE_MCP_READONLY` to `"false"` in the config and restart Claude when you are ready. |
 | Service calls time out but topics work | The `rosapi` node is not running on the ROS side. Use the default rosbridge launch file, which includes it: `ros2 launch rosbridge_server rosbridge_websocket_launch.xml`. |
