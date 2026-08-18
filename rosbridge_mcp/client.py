@@ -2,11 +2,13 @@
 
 Implements the subset of the rosbridge v2 protocol needed by the MCP tools:
 ``subscribe`` / ``unsubscribe`` / ``advertise`` / ``publish`` / ``call_service``
-plus incoming ``status`` messages.
+plus the ROS 2 action operations ``send_action_goal`` / ``cancel_action_goal``
+(with incoming ``action_feedback`` / ``action_result``) and incoming ``status``
+messages.
 
 The client lazily connects on first use and transparently reconnects if the
-connection drops between operations. Service calls are correlated with their
-responses via unique ``id`` fields.
+connection drops between operations. Service calls and action goals are
+correlated with their responses via unique ``id`` fields.
 """
 
 from __future__ import annotations
@@ -27,8 +29,18 @@ DEFAULT_ROSBRIDGE_URL = "ws://localhost:9090"
 # collectors fail fast instead of waiting out their full timeout.
 _CONNECTION_LOST = object()
 
+# Camera frames can exceed the websockets default of 1 MiB; allow up to 16 MiB.
+MAX_MESSAGE_SIZE = 2**24
+
 # How many rosbridge status warnings/errors to keep for diagnostics.
 _STATUS_HISTORY_LIMIT = 50
+
+ACTIONS_UNSUPPORTED_HINT = (
+    "this rosbridge server does not appear to support action operations "
+    "(send_action_goal / cancel_action_goal). Upgrade rosbridge_suite on the "
+    "robot to a ROS 2 release that includes action support "
+    "(https://github.com/RobotWebTools/rosbridge_suite)."
+)
 
 
 class RosbridgeError(Exception):
@@ -56,6 +68,8 @@ class RosbridgeClient:
         self._connect_lock = asyncio.Lock()
         # rosbridge 'status' messages with level warning/error, newest last.
         self._status_errors: list[dict[str, Any]] = []
+        # Last 'action_feedback' values received, keyed by goal id.
+        self._action_feedback: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ #
     # Connection management
@@ -74,7 +88,8 @@ class RosbridgeClient:
                 return
             try:
                 self._ws = await asyncio.wait_for(
-                    websockets.connect(self.url), timeout=self.connect_timeout
+                    websockets.connect(self.url, max_size=MAX_MESSAGE_SIZE),
+                    timeout=self.connect_timeout,
                 )
             except Exception as exc:
                 raise RosbridgeError(
@@ -228,9 +243,81 @@ class RosbridgeClient:
             self._advertised.add((topic, msg_type))
         await self._send({"op": "publish", "topic": topic, "msg": message})
 
+    async def send_action_goal(
+        self,
+        action: str,
+        action_type: str,
+        goal: dict[str, Any] | None = None,
+        timeout: float = 60.0,
+        wait_for_result: bool = True,
+    ) -> dict[str, Any]:
+        """Send a ROS 2 action goal via the rosbridge ``send_action_goal`` op.
+
+        When *wait_for_result* is true, waits for the correlated
+        ``action_result`` message and returns ``{"goal_id", "result",
+        "status", "values", "last_feedback"}``. Otherwise returns
+        ``{"goal_id", "result_pending": True}`` right after sending.
+        """
+        await self.ensure_connected()
+        goal_id = f"send_action_goal:{next(self._id_counter)}"
+        payload: dict[str, Any] = {
+            "op": "send_action_goal",
+            "id": goal_id,
+            "action": action,
+            "action_type": action_type,
+            "args": goal or {},
+            "feedback": wait_for_result,
+        }
+        if not wait_for_result:
+            await self._send(payload)
+            return {"goal_id": goal_id, "result_pending": True}
+
+        marker = self.status_error_marker
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending[goal_id] = future
+        try:
+            await self._send(payload)
+            result_msg = await asyncio.wait_for(future, timeout)
+        except asyncio.TimeoutError as exc:
+            if self._unknown_op_reported(marker):
+                raise RosbridgeError(ACTIONS_UNSUPPORTED_HINT) from exc
+            raise RosbridgeError(
+                f"Action goal to {action} got no result within {timeout}s. "
+                "The action may still be running (increase timeout or use "
+                "wait_for_result=false), or the robot's rosbridge may be too "
+                "old to support actions — " + ACTIONS_UNSUPPORTED_HINT
+            ) from exc
+        except RosbridgeError as exc:
+            if "unknown operation" in str(exc).lower():
+                raise RosbridgeError(ACTIONS_UNSUPPORTED_HINT) from exc
+            raise
+        finally:
+            self._pending.pop(goal_id, None)
+            last_feedback = self._action_feedback.pop(goal_id, None)
+        return {
+            "goal_id": goal_id,
+            "result": result_msg.get("result", False),
+            "status": result_msg.get("status"),
+            "values": result_msg.get("values"),
+            "last_feedback": last_feedback,
+        }
+
+    async def cancel_action_goal(self, action: str, goal_id: str) -> None:
+        """Cancel a previously sent action goal (``cancel_action_goal`` op)."""
+        await self.ensure_connected()
+        await self._send(
+            {"op": "cancel_action_goal", "id": goal_id, "action": action}
+        )
+
     # ------------------------------------------------------------------ #
     # Internals
     # ------------------------------------------------------------------ #
+
+    def _unknown_op_reported(self, marker: int) -> bool:
+        return any(
+            "unknown operation" in str(entry.get("msg", "")).lower()
+            for entry in self.status_errors_since(marker)
+        )
 
     async def _send(self, payload: dict[str, Any]) -> None:
         try:
@@ -279,6 +366,14 @@ class RosbridgeClient:
                 queue.put_nowait(msg.get("msg"))
         elif op == "status":
             self._handle_status(msg)
+        elif op == "action_feedback":
+            goal_id = msg.get("id")
+            if goal_id:
+                self._action_feedback[goal_id] = msg.get("values")
+        elif op == "action_result":
+            future = self._pending.get(msg.get("id", ""))
+            if future is not None and not future.done():
+                future.set_result(msg)
 
     def _handle_status(self, msg: dict[str, Any]) -> None:
         """Record rosbridge 'status' warnings/errors instead of dropping them

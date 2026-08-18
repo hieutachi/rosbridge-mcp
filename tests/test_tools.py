@@ -166,12 +166,18 @@ async def test_all_tools_registered():
     from rosbridge_mcp.server import mcp
 
     tool_names = set((await mcp.get_tools()).keys())
-    assert {
+    expected = {
         "list_topics",
         "list_nodes",
         "list_services",
         "get_topic_snapshot",
         "publish_message",
         "call_service",
+        "send_action_goal",
+        "cancel_action_goal",
+        "get_tf_tree",
+        "get_camera_image",
         "get_connection_status",
-    } <= tool_names
+    }
+    assert expected <= tool_names
+    assert len(expected) == 11
