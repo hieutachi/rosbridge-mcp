@@ -109,6 +109,59 @@ async def test_readonly_blocks_mutating_rosapi(tools, monkeypatch):
     assert result["readonly"] is True
 
 
+async def test_readonly_blocks_unknown_rosapi_service(tools, monkeypatch):
+    """Issue #3: readonly is an allowlist — an unknown /rosapi service is
+    rejected even though it starts with /rosapi/."""
+    monkeypatch.setenv("ROSBRIDGE_MCP_READONLY", "1")
+    result = await tools.call_service("/rosapi/some_future_service")
+    assert result["readonly"] is True
+    assert "Rejected" in result["error"]
+
+
+async def test_publish_reports_rosbridge_rejection(tools):
+    """Issue #2: when rosbridge answers a publish with a status error, the
+    tool result carries the warning instead of claiming clean success."""
+    result = await tools.publish_message("/rejected", "not_a_real/msg/Type", {"x": 1})
+    assert result["published"] is True
+    assert any("/rejected" in w for w in result["rosbridge_warnings"])
+    assert "note" in result
+
+
+async def test_publish_clean_has_no_warnings(tools):
+    result = await tools.publish_message(
+        "/cmd_vel", "geometry_msgs/msg/Twist", {"linear": {"x": 0.1}}
+    )
+    assert result["published"] is True
+    assert "rosbridge_warnings" not in result
+
+
+async def test_get_topic_snapshot_clamps_count_and_timeout(tools):
+    """Issue #4: count is clamped to 100 and timeout to 60 s."""
+    result = await tools.get_topic_snapshot("/counter", count=5000, timeout=1.0)
+    assert result["requested"] == 100
+    assert result["received"] == 3
+    result = await tools.get_topic_snapshot("/chatter", count=1, timeout=9999.0)
+    assert result["timeout_s"] == 60.0
+    assert result["received"] == 1
+
+
+async def test_get_topic_snapshot_fails_fast_on_disconnect(tools, mock_rosbridge):
+    """Issue #4: mid-collection connection loss returns immediately."""
+    import asyncio
+    import time
+
+    task = asyncio.create_task(
+        tools.get_topic_snapshot("/silent", count=1, timeout=30.0)
+    )
+    await asyncio.sleep(0.3)
+    started = time.monotonic()
+    await mock_rosbridge.stop()
+    result = await asyncio.wait_for(task, 5)
+    assert result["connection_lost"] is True
+    assert "lost" in result["error"]
+    assert time.monotonic() - started < 5
+
+
 async def test_all_tools_registered():
     from rosbridge_mcp.server import mcp
 

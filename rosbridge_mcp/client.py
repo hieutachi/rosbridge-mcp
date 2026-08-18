@@ -1,7 +1,8 @@
 """Async rosbridge (v2 protocol) WebSocket client.
 
 Implements the subset of the rosbridge v2 protocol needed by the MCP tools:
-``subscribe`` / ``unsubscribe`` / ``advertise`` / ``publish`` / ``call_service``.
+``subscribe`` / ``unsubscribe`` / ``advertise`` / ``publish`` / ``call_service``
+plus incoming ``status`` messages.
 
 The client lazily connects on first use and transparently reconnects if the
 connection drops between operations. Service calls are correlated with their
@@ -21,6 +22,13 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 DEFAULT_ROSBRIDGE_URL = "ws://localhost:9090"
+
+# Sentinel pushed into subscription queues when the connection is lost, so
+# collectors fail fast instead of waiting out their full timeout.
+_CONNECTION_LOST = object()
+
+# How many rosbridge status warnings/errors to keep for diagnostics.
+_STATUS_HISTORY_LIMIT = 50
 
 
 class RosbridgeError(Exception):
@@ -46,6 +54,8 @@ class RosbridgeClient:
         self._advertised: set[tuple[str, str]] = set()
         self._id_counter = itertools.count(1)
         self._connect_lock = asyncio.Lock()
+        # rosbridge 'status' messages with level warning/error, newest last.
+        self._status_errors: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------ #
     # Connection management
@@ -88,6 +98,7 @@ class RosbridgeClient:
                 pass
             self._ws = None
         self._fail_pending(RosbridgeError("Connection closed"))
+        self._notify_connection_lost()
 
     def status(self) -> dict[str, Any]:
         return {
@@ -97,6 +108,20 @@ class RosbridgeClient:
             "active_subscriptions": sorted(self._subscriptions),
             "pending_service_calls": len(self._pending),
         }
+
+    # ------------------------------------------------------------------ #
+    # rosbridge status tracking (issue #2)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def status_error_marker(self) -> int:
+        """Opaque marker to pass to :meth:`status_errors_since` later."""
+        return len(self._status_errors)
+
+    def status_errors_since(self, marker: int) -> list[dict[str, Any]]:
+        """Return rosbridge warning/error status messages received after
+        *marker* was taken (see :attr:`status_error_marker`)."""
+        return list(self._status_errors[marker:])
 
     # ------------------------------------------------------------------ #
     # rosbridge operations
@@ -137,7 +162,11 @@ class RosbridgeClient:
         timeout: float = 5.0,
         msg_type: str | None = None,
     ) -> list[Any]:
-        """Subscribe to *topic*, collect up to *count* messages, unsubscribe."""
+        """Subscribe to *topic*, collect up to *count* messages, unsubscribe.
+
+        Raises :class:`RosbridgeError` immediately if the connection is lost
+        while collecting (instead of silently waiting out the timeout).
+        """
         await self.ensure_connected()
         queue: asyncio.Queue = asyncio.Queue()
         self._subscriptions.setdefault(topic, set()).add(queue)
@@ -158,9 +187,15 @@ class RosbridgeClient:
                 if remaining <= 0:
                     break
                 try:
-                    messages.append(await asyncio.wait_for(queue.get(), remaining))
+                    item = await asyncio.wait_for(queue.get(), remaining)
                 except asyncio.TimeoutError:
                     break
+                if item is _CONNECTION_LOST:
+                    raise RosbridgeError(
+                        f"Connection to rosbridge lost while collecting "
+                        f"messages from {topic}"
+                    )
+                messages.append(item)
         finally:
             listeners = self._subscriptions.get(topic)
             if listeners is not None:
@@ -218,9 +253,13 @@ class RosbridgeClient:
         except Exception:
             pass
         finally:
+            # Only tear down state if we are still the *current* connection.
+            # A stale listener (superseded by a reconnect) must not fail
+            # calls that were resent on the new connection (issue #1).
             if self._ws is ws:
                 self._connected = False
-            self._fail_pending(RosbridgeError("Connection to rosbridge lost"))
+                self._fail_pending(RosbridgeError("Connection to rosbridge lost"))
+                self._notify_connection_lost()
 
     def _dispatch(self, msg: dict[str, Any]) -> None:
         op = msg.get("op")
@@ -238,9 +277,39 @@ class RosbridgeClient:
         elif op == "publish":
             for queue in self._subscriptions.get(msg.get("topic", ""), set()):
                 queue.put_nowait(msg.get("msg"))
+        elif op == "status":
+            self._handle_status(msg)
+
+    def _handle_status(self, msg: dict[str, Any]) -> None:
+        """Record rosbridge 'status' warnings/errors instead of dropping them
+        (issue #2), and fail any pending call the status refers to."""
+        level = str(msg.get("level", "")).lower()
+        if level not in ("warning", "error"):
+            return
+        entry = {
+            "level": level,
+            "msg": str(msg.get("msg", "")),
+            "id": msg.get("id"),
+            "received_at": time.time(),
+        }
+        self._status_errors.append(entry)
+        if len(self._status_errors) > _STATUS_HISTORY_LIMIT:
+            del self._status_errors[: -_STATUS_HISTORY_LIMIT]
+        if level == "error" and entry["id"]:
+            future = self._pending.get(entry["id"])
+            if future is not None and not future.done():
+                future.set_exception(
+                    RosbridgeError(f"rosbridge error: {entry['msg']}")
+                )
 
     def _fail_pending(self, error: Exception) -> None:
         for future in self._pending.values():
             if not future.done():
                 future.set_exception(error)
         self._pending.clear()
+
+    def _notify_connection_lost(self) -> None:
+        """Wake up all active collectors so they fail fast (issue #4)."""
+        for queues in self._subscriptions.values():
+            for queue in queues:
+                queue.put_nowait(_CONNECTION_LOST)

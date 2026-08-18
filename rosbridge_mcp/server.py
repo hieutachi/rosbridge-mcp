@@ -6,11 +6,13 @@ is done via environment variables:
 - ``ROSBRIDGE_URL``: WebSocket URL of the rosbridge server
   (default ``ws://localhost:9090``).
 - ``ROSBRIDGE_MCP_READONLY``: when truthy (``1``/``true``/``yes``), mutating
-  tools (``publish_message`` and non-rosapi ``call_service``) are rejected.
+  tools (``publish_message`` and any ``call_service`` outside a fixed
+  allowlist of read-only ``/rosapi`` introspection services) are rejected.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -29,8 +31,38 @@ mcp = FastMCP(
 
 _client: RosbridgeClient | None = None
 
-# rosapi services that mutate state and are therefore blocked in readonly mode.
-_MUTATING_ROSAPI = {"/rosapi/set_param", "/rosapi/delete_param"}
+# Readonly mode uses an *allowlist* (issue #3): only these known read-only
+# rosapi introspection services may be called. Anything else — including
+# unknown or future /rosapi services — is rejected.
+READONLY_SAFE_ROSAPI = frozenset(
+    {
+        "/rosapi/topics",
+        "/rosapi/topics_and_raw_types",
+        "/rosapi/topics_for_type",
+        "/rosapi/topic_type",
+        "/rosapi/nodes",
+        "/rosapi/node_details",
+        "/rosapi/services",
+        "/rosapi/services_for_type",
+        "/rosapi/service_type",
+        "/rosapi/service_providers",
+        "/rosapi/service_node",
+        "/rosapi/service_request_details",
+        "/rosapi/service_response_details",
+        "/rosapi/message_details",
+        "/rosapi/publishers",
+        "/rosapi/subscribers",
+        "/rosapi/action_servers",
+        "/rosapi/interfaces",
+        "/rosapi/get_param",
+        "/rosapi/get_param_names",
+        "/rosapi/has_param",
+        "/rosapi/get_time",
+    }
+)
+
+# How long to wait after fire-and-forget ops for a rosbridge 'status' error.
+_STATUS_GRACE_S = 0.2
 
 
 def get_client() -> RosbridgeClient:
@@ -123,26 +155,40 @@ async def get_topic_snapshot(
 
     Args:
         topic: Topic name including leading slash, e.g. "/scan" or "/odom".
-        count: How many messages to collect (default 1). Use more to observe
-            a value changing over time.
-        timeout: Max seconds to wait (default 5.0). The tool never blocks
-            longer than this, even on a silent topic.
+        count: How many messages to collect (default 1, clamped to at most
+            100). Use more to observe a value changing over time.
+        timeout: Max seconds to wait (default 5.0, clamped to at most 60.0).
+            The tool never blocks longer than this, even on a silent topic.
         msg_type: Optional full message type, e.g. "sensor_msgs/msg/LaserScan".
             Usually omit it; rosbridge resolves the type of existing topics.
 
-    Returns {"topic", "requested", "received", "messages": [...], "timed_out"}.
-    If "timed_out" is true, nothing (or not enough) was published within the
-    timeout — the topic may be silent, misspelled, or not exist.
+    Returns {"topic", "requested", "received", "messages": [...], "timed_out",
+    "timeout_s"}. If "timed_out" is true, nothing (or not enough) was
+    published within the timeout — the topic may be silent, misspelled, or
+    not exist. If the rosbridge connection drops mid-collection, the tool
+    returns immediately with {"error", "connection_lost": true} instead of
+    waiting out the timeout.
     """
-    messages = await get_client().collect_messages(
-        topic, count=count, timeout=timeout, msg_type=msg_type
-    )
+    count = max(1, min(int(count), 100))
+    timeout = max(0.1, min(float(timeout), 60.0))
+    try:
+        messages = await get_client().collect_messages(
+            topic, count=count, timeout=timeout, msg_type=msg_type
+        )
+    except RosbridgeError as exc:
+        return {
+            "topic": topic,
+            "requested": count,
+            "error": str(exc),
+            "connection_lost": True,
+        }
     return {
         "topic": topic,
         "requested": count,
         "received": len(messages),
         "messages": messages,
         "timed_out": len(messages) < count,
+        "timeout_s": timeout,
     }
 
 
@@ -164,12 +210,27 @@ async def publish_message(
              "angular": {"x": 0.0, "y": 0.0, "z": 0.2}} for a Twist.
             Omitted fields default to zero/empty on the ROS side.
 
-    Returns {"published": true, "topic": ..., "type": ...} on success.
+    Returns {"published": true, "topic": ..., "type": ...} on success. The
+    tool briefly waits for rosbridge 'status' errors after publishing; if
+    rosbridge rejected the message (e.g. wrong msg_type), the result includes
+    "rosbridge_warnings" — treat those as the publish having failed.
     """
     if is_readonly():
         return _readonly_error("publish_message")
-    await get_client().publish(topic, msg_type, message)
-    return {"published": True, "topic": topic, "type": msg_type}
+    client = get_client()
+    marker = client.status_error_marker
+    await client.publish(topic, msg_type, message)
+    await asyncio.sleep(_STATUS_GRACE_S)
+    warnings = [e["msg"] for e in client.status_errors_since(marker)]
+    result: dict[str, Any] = {"published": True, "topic": topic, "type": msg_type}
+    if warnings:
+        result["rosbridge_warnings"] = warnings
+        result["note"] = (
+            "rosbridge reported a problem right after this publish; the "
+            "message most likely did not reach the topic. Check msg_type "
+            "and message fields."
+        )
+    return result
 
 
 async def call_service(
@@ -179,8 +240,9 @@ async def call_service(
 ) -> dict[str, Any]:
     """Call any ROS service with JSON args and return the response values.
 
-    Rejected when ROSBRIDGE_MCP_READONLY is set, except read-only /rosapi/*
-    introspection services.
+    Rejected when ROSBRIDGE_MCP_READONLY is set, unless the service is on the
+    fixed allowlist of known read-only /rosapi introspection services
+    (topics, nodes, services, *_type, *_details, get_param, get_time, ...).
 
     Args:
         service: Full service name, e.g. "/rosapi/topic_type" or
@@ -190,16 +252,25 @@ async def call_service(
         timeout: Max seconds to wait for the response (default 10.0).
 
     Returns {"service", "success": true, "values": {...}} on success, or
-    {"service", "success": false, "error": "..."} on failure/timeout.
+    {"service", "success": false, "error": "..."} on failure/timeout (with
+    any related rosbridge status errors under "rosbridge_status").
     """
-    if is_readonly():
-        allowed = service.startswith("/rosapi/") and service not in _MUTATING_ROSAPI
-        if not allowed:
-            return _readonly_error(f"call_service({service})")
+    if is_readonly() and service not in READONLY_SAFE_ROSAPI:
+        return _readonly_error(f"call_service({service})")
+    client = get_client()
+    marker = client.status_error_marker
     try:
-        values = await get_client().call_service(service, args, timeout=timeout)
+        values = await client.call_service(service, args, timeout=timeout)
     except RosbridgeError as exc:
-        return {"service": service, "success": False, "error": str(exc)}
+        failure: dict[str, Any] = {
+            "service": service,
+            "success": False,
+            "error": str(exc),
+        }
+        status_msgs = [e["msg"] for e in client.status_errors_since(marker)]
+        if status_msgs:
+            failure["rosbridge_status"] = status_msgs
+        return failure
     return {"service": service, "success": True, "values": values}
 
 

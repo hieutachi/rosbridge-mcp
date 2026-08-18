@@ -3,7 +3,8 @@
 Speaks just enough of the rosbridge v2 protocol to exercise every tool:
 ``subscribe`` replays canned messages, ``call_service`` answers rosapi calls
 with fake graph data (and echoes anything else), ``publish``/``advertise``
-are recorded for inspection.
+are recorded for inspection. Advertising ``/rejected`` triggers a rosbridge
+``status`` error, like a real rosbridge rejecting a bad message type.
 
 Run standalone with ``python -m rosbridge_mcp.mock_server [port]``.
 """
@@ -82,6 +83,21 @@ class MockRosbridge:
                     self.advertised.append(
                         {"topic": msg["topic"], "type": msg.get("type", "")}
                     )
+                    if msg["topic"] == "/rejected":
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "op": "status",
+                                    "level": "error",
+                                    "id": msg.get("id"),
+                                    "msg": (
+                                        "Unable to advertise topic /rejected: "
+                                        "unknown message type "
+                                        + msg.get("type", "")
+                                    ),
+                                }
+                            )
+                        )
                 elif op == "publish":
                     self.published.append(
                         {"topic": msg["topic"], "msg": msg.get("msg")}
