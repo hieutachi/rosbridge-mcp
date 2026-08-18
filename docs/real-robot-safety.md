@@ -30,7 +30,7 @@ Configure your MCP client ([Claude Desktop](claude-desktop.md) / [Cursor & VS Co
 }
 ```
 
-In read-only mode the agent can list topics/nodes/services and snapshot any topic, but `publish_message` is rejected and `call_service` only allows read-only `/rosapi/*` introspection.
+In read-only mode the agent can list topics/nodes/services, snapshot any topic, read the TF tree (`get_tf_tree`), and grab camera frames (`get_camera_image`) — but every tool that can affect the robot is rejected: `publish_message`, `send_action_goal`, `cancel_action_goal`, and any `call_service` outside a fixed allowlist of read-only `/rosapi` introspection services. Note that ROS 2 **actions** are how most robots do navigation and arm motion, so blocking `send_action_goal` in readonly mode matters just as much as blocking `/cmd_vel`.
 
 ## Step 3 — Understand the robot before writing to it
 

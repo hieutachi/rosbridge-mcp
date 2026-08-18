@@ -23,9 +23,10 @@ rosbridge_mcp/
 ├── mock_server.py  MockRosbridge — fake rosbridge for tests, demos, and manual runs
 └── __init__.py     public exports
 tests/
-├── conftest.py     fixtures: mock_rosbridge, client, tools
-├── test_client.py  protocol-level tests (correlation, reconnect, unsubscribe)
-└── test_tools.py   tool-level tests (incl. readonly guardrails)
+├── conftest.py        fixtures: mock_rosbridge, client, tools
+├── test_client.py     protocol-level tests (correlation, reconnect, status, fail-fast)
+├── test_tools.py      tool-level tests (incl. readonly guardrails)
+└── test_v02_tools.py  action client, TF tree, and camera snapshot tests
 examples/
 ├── demo.py                     end-to-end script against the mock
 ├── claude_desktop_config.json  sample Claude Desktop config
@@ -34,14 +35,15 @@ examples/
 
 **`RosbridgeClient`** (`client.py`) owns one WebSocket connection and implements the rosbridge v2 ops. Design points:
 
-- *Lazy connect + transparent reconnect*: every operation calls `ensure_connected()`; if a send hits a closed connection, `_send()` reconnects once and retries.
-- *Correlation*: each `call_service` gets a unique `id`; a background listener task resolves the matching future when a `service_response` with that `id` arrives.
-- *Subscriptions*: `collect_messages()` registers an `asyncio.Queue` per snapshot, sends `subscribe`, drains the queue until `count` or `timeout`, then always unsubscribes.
+- *Lazy connect + transparent reconnect*: every operation calls `ensure_connected()`; if a send hits a closed connection, `_send()` reconnects once and retries. A stale listener from a superseded connection never tears down state belonging to the new one (it checks `self._ws is ws` before failing pending calls).
+- *Correlation*: each `call_service` and `send_action_goal` gets a unique `id`; a background listener task resolves the matching future when a `service_response` / `action_result` with that `id` arrives. The last `action_feedback` per goal id is kept and returned with the result.
+- *Subscriptions*: `collect_messages()` registers an `asyncio.Queue` per snapshot, sends `subscribe`, drains the queue until `count` or `timeout`, then always unsubscribes. When the connection dies, a sentinel is pushed into every collector queue so collectors fail fast instead of waiting out their timeout.
 - *Advertise-once*: `publish()` advertises each `(topic, type)` pair once per connection.
+- *Status tracking*: rosbridge `status` messages with level warning/error are recorded (last 50); tools surface them (e.g. `publish_message` → `rosbridge_warnings`), and an error status carrying the `id` of a pending call fails that call immediately.
 
 **`server.py`** holds the tool functions as plain async functions (registered with FastMCP at the bottom of the module). Keeping them plain functions means tests call them directly without going through the MCP transport. Readonly enforcement (`ROSBRIDGE_MCP_READONLY`) lives here, in `is_readonly()`, and is checked per call so tests can toggle it with `monkeypatch.setenv`.
 
-**`mock_server.py`** speaks just enough rosbridge: `subscribe` replays canned messages from `topic_messages`, `call_service` answers rosapi services with fake graph data (and echoes unknown services; `/fail` simulates a failure), `publish`/`advertise`/`unsubscribe` are recorded in lists for assertions.
+**`mock_server.py`** speaks just enough rosbridge: `subscribe` replays canned messages from `topic_messages` (including fake `/tf`, `/tf_static`, and camera topics), `call_service` answers rosapi services with fake graph data (and echoes unknown services; `/fail` simulates a failure), `publish`/`advertise`/`unsubscribe` are recorded in lists for assertions, `send_action_goal`/`cancel_action_goal` answer with fake feedback/results (actions containing "slow" stay pending until cancelled; set `supports_actions = False` to simulate an old rosbridge), and advertising `/rejected` triggers a rosbridge `status` error.
 
 ## Adding a new tool
 

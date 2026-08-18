@@ -2,20 +2,18 @@
 
 Where rosbridge-mcp is going, stage by stage. Every item below is technically feasible with the current architecture (rosbridge v2 protocol already supports actions, TF, and binary-safe encodings); what each stage needs is the listed resources. Contributions toward any stage are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Status today (v0.1): 7 tools, 21 tests, mock-based CI, per-scenario docs, readonly guardrail. Zero telemetry, MIT licensed.
+Status today (v0.2.0): 11 tools (topics, services, ROS 2 actions, TF tree, camera snapshots), 43 tests, mock-based CI, per-scenario docs, readonly guardrail with a `/rosapi` allowlist. Zero telemetry, MIT licensed.
 
-## v0.2 — Perception & actions (next)
+## v0.2 — Perception & actions — **Done in v0.2.0**
 
 **Goal:** cover the three most-requested robot interactions beyond topics/services.
 
-| Deliverable | Notes |
+| Deliverable | Status |
 | --- | --- |
-| ROS 2 action client tools (`send_goal`, `get_goal_status`, `cancel_goal`) | rosbridge ≥ 0.12 exposes `send_action_goal` / `cancel_action_goal` ops; same correlation-id pattern as services |
-| TF tree snapshot tool (`get_transform`) | subscribe `/tf` + `/tf_static` briefly, or call `/tf2_web_republisher` when present |
-| Camera image snapshot (base64 JPEG/PNG, downscaled) | subscribe `sensor_msgs/msg/CompressedImage`; return MCP image content so vision models can see through the robot's camera |
-| Topic allow/deny-list env vars | pure policy filter, complements readonly mode |
-
-**Resources needed:** ~3–4 weeks of one developer's part-time effort; a ROS 2 Humble/Jazzy machine or Docker for integration testing (mock covers unit tests); no special hardware.
+| ROS 2 action client tools | ✅ Done in v0.2.0 as `send_action_goal` (send + wait for result + last feedback, or fire-and-forget with a returned `goal_id`) and `cancel_action_goal`, using the rosbridge `send_action_goal` / `cancel_action_goal` ops with the same correlation-id pattern as services. A separate `get_goal_status` tool was not needed: the result carries the final `action_msgs/GoalStatus`. |
+| TF tree snapshot tool | ✅ Done in v0.2.0 as `get_tf_tree`: subscribes `/tf` + `/tf_static` briefly and merges transforms into a parent→child tree with static/dynamic provenance. |
+| Camera image snapshot | ✅ Done in v0.2.0 as `get_camera_image`: one `CompressedImage` (or raw `Image`) frame as base64, 4 MB safety limit. Returned as JSON base64 rather than MCP image content for now. |
+| Topic allow/deny-list env vars | ⏭️ Moved to v0.3 (fits the security-hardening theme; readonly mode gained a `/rosapi` service allowlist in v0.2.0 instead). |
 
 ## v0.3 — Deployment & security hardening
 
@@ -27,6 +25,7 @@ Status today (v0.1): 7 tools, 21 tests, mock-based CI, per-scenario docs, readon
 | Official Docker image (`ghcr.io`) + compose file bundling rosbridge | CI publish job |
 | rosbridge `auth` op support (MAC/token per rosbridge_suite spec) + `wss://` TLS | closes the "no auth by default" gap |
 | Structured local logging with redaction options | local only — no telemetry, ever (see Privacy in README) |
+| Topic allow/deny-list env vars | pure policy filter, complements readonly mode (moved from v0.2) |
 
 **Resources needed:** ~4 weeks part-time dev; a small cloud VM or self-hosted runner for image builds and network testing; a security-minded reviewer for the auth layer (looking for a contributor here).
 

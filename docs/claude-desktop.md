@@ -60,7 +60,7 @@ Notes:
 
 ## Step 4 — Restart Claude Desktop
 
-Fully quit (Windows: right-click tray icon → Quit; macOS: Cmd+Q) and reopen. Under the tools icon in the chat input you should see the `rosbridge` server with 7 tools.
+Fully quit (Windows: right-click tray icon → Quit; macOS: Cmd+Q) and reopen. Under the tools icon in the chat input you should see the `rosbridge` server with 11 tools.
 
 ## Step 5 — Try it
 
